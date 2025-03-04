@@ -2,12 +2,12 @@
 """
 @ author: Jin Han
 @ email: jinhan9165@gmail.com
-@ Created on: 2022.07
-version 1.0
-update:
+@ Created on: date (e.g.2022-02-15)
+version 1.1
+update: 2025-03-04
 Refer: [1] Blankertz, et al. "Single-trial analysis and classification of ERP components—a tutorial." NeuroImage 56.2 (2011): 814-825.
 
-Application: Shrinkage Linear discriminant analysis (SKLDA), P300 speller
+Application: 
 
 """
 
@@ -114,10 +114,10 @@ class SKLDA(BaseEstimator, TransformerMixin, ClassifierMixin):
         Some important intermediate variables are as follows.
 
         sigma_c1_new: ndarray of shape (n_features, n_features)
-            sigma penalty (i.e new covariance) in class 1.
+            sigma penalty (i.e new covariance) in class 1. (i.e. positive samples)
 
         sigma_c2_new: ndarray of shape (n_features, n_features)
-            sigma penalty (i.e new covariance) in class 2.
+            sigma penalty (i.e new covariance) in class 2. (i.e. negative samples)
 
         Sw_new: ndarray of shape (n_features, n_features)
             New common covariance.
@@ -157,6 +157,7 @@ class SKLDA(BaseEstimator, TransformerMixin, ClassifierMixin):
         # estimate covariance
         n_samples_train = self.n_samples_c1 + self.n_samples_c2
         weight_vec = np.empty((n_samples_test, self.D))
+        self.sklda_threshold = np.zeros(n_samples_test)
         proba = np.zeros(n_samples_test)
         for idx_test in range(n_samples_test):
             # sigma_c1_new[idx_test, ...] = (1-lambda_c1[idx_test]) * self.sigma_c1 + lambda_c1[idx_test] * self.nu_c1 * np.eye(self.D)
@@ -165,8 +166,32 @@ class SKLDA(BaseEstimator, TransformerMixin, ClassifierMixin):
             sigma_c2_new = (1-lambda_c2[idx_test]) * self.sigma_c2 + lambda_c2[idx_test] * self.nu_c2 * np.eye(self.D)
             Sw_new = sigma_c1_new * (self.n_samples_c1/n_samples_train) + sigma_c2_new * (self.n_samples_c2/n_samples_train)
             weight_vec[idx_test, :] = (LA.inv(Sw_new) @ (self.avg_feats1 - self.avg_feats2).T).T
+            self.sklda_threshold[idx_test] = weight_vec[idx_test, :] @ (self.avg_feats1.T + self.avg_feats2.T) / 2
 
             proba[idx_test] = weight_vec[idx_test, :] @ Xtest[idx_test, :]
 
         return proba
+
+    def predict(self, Xtest: ndarray):
+        """Predict class of the test samples.
+           Only applicable to RSVP tasks.
+           For speller tasks, transform is required for recognition (Generally, pred = arg max(dv1, dv2, ..., dvn)).
+
+        Parameters
+        ----------
+        Xtest: ndarray of shape (n_samples, n_features).
+            Input test data.
+
+        Returns
+        -------
+        pred_class: ndarray of shape (n_samples,)
+            predicted classes of all test samples.
+        """
+
+        proba = self.transform(Xtest)
+        pred_class = (proba > self.sklda_threshold) * 1
+
+        return pred_class
+
+
 

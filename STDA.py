@@ -2,13 +2,13 @@
 """
 @ author: Jin Han
 @ email: jinhan9165@gmail.com
-@ Created on: 2022.05
-version 1.0
-update:
+@ Created on: 2022-05
+version 1.1
+update: 2025-03-04
 Refer: [1] Zhang, Yu, et al. "Spatial-temporal discriminant analysis for ERP-based brain-computer interface."
             IEEE Transactions on Neural Systems and Rehabilitation Engineering 21.2 (2013): 233-243.
 
-Application: Spatial-Temporal Discriminant Analysis (STDA), P300 speller
+Application: Spatial-Temporal Discriminant Analysis (STDA)
 
 """
 import warnings
@@ -41,8 +41,8 @@ def LDA_kernel(X1: ndarray, X2: ndarray):
     Note
     ----
     The test samples should be formatted as (n_samples, n_features).
-        test sample is positive, if W @ test_sample.T > lda_thold.
-        test sample is negative, if W @ test_sample.T <= lda_thold.
+        test sample is positive, if W @ test_sample.T > lda_threshold.
+        test sample is negative, if W @ test_sample.T <= lda_threshold.
     """
 
     # mean feature vectors
@@ -107,13 +107,17 @@ class STDA(BaseEstimator, TransformerMixin, ClassifierMixin):
     wf: ndarray of shape (1, L*L)
         Weight vector of LDA after the raw features are projected by STDA.
 
+    threshold: float
+        the threshold of STDA. the test samples is positive, if H_dv(decision values) > threshold, or is negative.
+
     References
     ----------
     [1] Zhang, Yu, et al. "Spatial-temporal discriminant analysis for ERP-based brain-computer interface."
             IEEE Transactions on Neural Systems and Rehabilitation Engineering 21.2 (2013): 233-243.
     """
 
-    def __init__(self, L: int = 6, max_iter: int = 400, eps: float = 1e-5):
+    def __init__(self, seq_nontar=None, L: int = 6, max_iter: int = 100, eps: float = 1e-5):
+        self.seq_nontar = seq_nontar
         self.L = L
         self.max_iter = max_iter
         self.eps = eps
@@ -147,7 +151,7 @@ class STDA(BaseEstimator, TransformerMixin, ClassifierMixin):
             raise NotImplementedError('Only for binary problem. Multi-class STDA is not tested.')
 
         loc = [np.argwhere(y == self.classes_[idx_class]).squeeze() for idx_class in range(n_classes)]
-        X1, X2 = X[loc[0]], X[loc[1]]  # X1: negative samples. X2: positive samples.
+        X1, X2 = X[loc[0], ...], X[loc[1], ...]  # X1: negative samples. X2: positive samples. [self.seq_nontar,...]
 
         n_samples_c1, n_samples_c2 = X1.shape[0], X2.shape[0]
         # W1, W2 = np.ones((n_chs, self.L)), np.ones((n_features, self.L))
@@ -172,11 +176,11 @@ class STDA(BaseEstimator, TransformerMixin, ClassifierMixin):
                 # construct Sw
                 Y_mat_c1 -= Y_bar_all
                 Y_mat_c2 -= Y_bar_all
-                Sw = (np.matmul(Y_mat_c1, Y_mat_c1.transpose((0, 2, 1))) +
-                      np.matmul(Y_mat_c2, Y_mat_c2.transpose((0, 2, 1)))).sum(axis=0)
+                Sw = np.matmul(Y_mat_c1, Y_mat_c1.transpose((0, 2, 1))).sum(axis=0) +\
+                     np.matmul(Y_mat_c2, Y_mat_c2.transpose((0, 2, 1))).sum(axis=0)
 
-                # eig_vals, eig_vecs = LA.eig(np.dot(LA.inv(Sw), Sb))
-                eig_vals, eig_vecs = LA.eigh(Sb, Sw)
+                eig_vals, eig_vecs = LA.eig(np.dot(LA.inv(Sw), Sb))
+                # eig_vals, eig_vecs = LA.eigh(Sb, Sw)
                 loc_idx = eig_vals.argsort()[::-1]  # descending order
 
                 eig_vals = eig_vals[loc_idx]
@@ -194,7 +198,8 @@ class STDA(BaseEstimator, TransformerMixin, ClassifierMixin):
                     f_c1 = np.matmul(np.matmul(self.W1.T, X1), self.W2).reshape(n_samples_c1, -1)
                     f_c2 = np.matmul(np.matmul(self.W1.T, X2), self.W2).reshape(n_samples_c2, -1)
 
-                    self.wf, _ = LDA_kernel(f_c2, f_c1)
+                    self.wf, self.threshold = LDA_kernel(f_c2, f_c1)
+                    print('**************%d-th iteration Exit**************' % (self.iter_times))
 
                     return self
 
@@ -202,19 +207,20 @@ class STDA(BaseEstimator, TransformerMixin, ClassifierMixin):
                     warnings.warn("The alternating iteration has been performed many times (>200). "
                                   "Model may be un-convergence.")
 
+            if self.iter_times > 90:
+                print('-------------%d-th iteration-----------' % (self.iter_times))
 
     def transform(self, Xtest):
         """Project data and Get the decision values.
 
         Parameters
         ----------
-        Xtest: ndarray of shape (n_samples, n_features).
+        Xtest: ndarray of shape (n_samples, n_chs, n_features).
             Input test data.
 
         Returns
         -------
-        H_dv: ndarray of shape (n_samples, )
-            decision values.
+        H_dv: decision values.
         """
         n_samples = Xtest.shape[0]
         f_hat = np.matmul(np.matmul(self.W1.T, Xtest), self.W2).reshape(n_samples, -1)
@@ -222,6 +228,26 @@ class STDA(BaseEstimator, TransformerMixin, ClassifierMixin):
         H_dv = f_hat @ self.wf.T
 
         return H_dv.squeeze()
+
+    def predict(self, Xtest):
+        """Predict class of the test samples.
+           Only applicable to RSVP tasks.
+           For speller tasks, transform is required for recognition (Generally, pred = arg max(dv1, dv2, ..., dvn)).
+
+        Parameters
+        ----------
+        Xtest: ndarray of shape (n_samples, n_chs, n_features).
+            Input test data.
+
+        Returns
+        -------
+        pred_class: decision values.
+        """
+        dv = self.transform(Xtest)
+        pred_class = (dv > self.threshold) * 1
+
+        return pred_class
+
 
 
 if __name__ == '__main__':
