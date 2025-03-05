@@ -3,11 +3,13 @@
 @ author: Jin Han
 @ email: jinhan9165@gmail.com
 @ Created on: 2022.07
+version 1.1
+update: 2025-03-04
 Refer:
     [1] Sajda, Paul, et al. "In a blink of an eye and a switch of a transistor: cortically coupled computer vision."
         Proceedings of the IEEE 98.3 (2010): 462-478.
 
-Application: Binary problems, e.g., single trial recognition for P300-based BCI.
+Application: Binary problems, e.g., single trial P300 recognition for BCI.
 
 """
 import warnings
@@ -153,7 +155,7 @@ class HDCA(BaseEstimator, TransformerMixin, ClassifierMixin):
             Vector containing the class labels for each sample.
         """
         dv_hdca = self.transform(X)
-        y_pred = (dv_hdca > self.threshold) * np.ones((40), dtype=int)
+        y_pred = (dv_hdca > self.threshold) * np.ones((X.shape[0]), dtype=int)
 
         return y_pred
 
